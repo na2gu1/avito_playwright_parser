@@ -3,17 +3,19 @@ import re
 from datetime import datetime
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 from models.listing import AvitoListing
+from utils.logger import setup_logger
 
 class AvitoParser:
-    def __init__(self, base_url: str, max_scrolls: int = 10):
+    def __init__(self, base_url: str, max_scrolls: int = 10,):
         self.base_url = base_url
         self.max_scrolls = max_scrolls
+        self.logger = setup_logger(__class__.__name__)
 
     async def parse(self) -> list[AvitoListing]:
         async with async_playwright() as p:
             # Запускаем браузер с настройками для обхода детекта
             browser = await p.chromium.launch(
-                headless=True,
+                headless=False,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
@@ -42,48 +44,62 @@ class AvitoParser:
 
             # Ждём появления хотя бы одного объявления
             try:
-                await page.wait_for_selector("div[data-marker='item']", timeout=10000)
+                await page.wait_for_selector("div[id^='i']", timeout=15000)
             except PlaywrightTimeout:
-                print("Не удалось загрузить объявления. Возможно, защита Авито.")
+                self.logger.error("Не найдено ни одного объявления по ID-паттерну")
                 await browser.close()
                 return []
 
-            # Извлекаем все карточки
-            items = await page.query_selector_all("div[data-marker='item']")
+            # Получаем все объявления по ID
+            items = await page.query_selector_all("div[id^='i']")
+            self.logger.info(f"Найдено {len(items)} объявлений по ID-паттерну")
 
             listings = []
             for item in items:
                 try:
                     # URL и ID
-                    link_el = await item.query_selector("a[data-marker='item-title']")
+                    link_el = await item.query_selector("a[href*='/moskva/']")
                     if not link_el:
+                     link_el = await item.query_selector("a")  # fallback
+
+                    if not link_el:
+                        self.logger.warning(f"Не найдена ссылка в объявлении (элемент без <a>)")
                         continue
+
                     url = await link_el.get_attribute("href")
-                    if not url or "avito.ru" not in url:
+                    if not url or not isinstance(url, str):
+                        self.logger.warning(f"Некорректный href в объявлении")
                         continue
+
                     if url.startswith("/"):
                         url = "https://www.avito.ru" + url
+                    elif not url.startswith("http"):
+                        self.logger.warning(f"Неожиданный формат URL: {url}")
+                        continue
 
                     # Извлекаем ID из URL
                     avito_id_match = re.search(r"_(\d+)$", url)
                     avito_id = avito_id_match.group(1) if avito_id_match else "unknown"
 
                     # Заголовок
-                    title = await (await link_el.text_content()).strip()
+                    title = (await link_el.text_content()).strip()
 
                     # Цена
                     price_el = await item.query_selector("span[itemprop='price']")
-                    price_text = await price_el.text_content() if price_el else ""
+                    if price_el:
+                        price_text = await price_el.text_content()
+                    else:
+                        price_text = ""
+
                     price = None
                     if price_text:
-                        # Убираем всё кроме цифр
                         price_digits = re.sub(r"[^\d]", "", price_text)
                         if price_digits:
                             price = int(price_digits)
 
                     # Локация
                     location_el = await item.query_selector("div[data-marker='item-address'] > span")
-                    location = await location_el.text_content() if location_el else None
+                    location = (await location_el.text_content()) if location_el else None
 
                     # Тип продавца
                     seller_badge = await item.query_selector("div[data-marker='item-specific-params'] span")

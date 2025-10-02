@@ -3,7 +3,7 @@ from typing import List, Optional
 from datetime import datetime
 
 class AvitoListing(BaseModel):
-    avito_id: int
+    avito_id: str
     title: str
     price: Optional[int]
     url: str
