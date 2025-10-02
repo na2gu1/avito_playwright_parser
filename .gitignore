@@ -1,4 +1,3 @@
-# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -9,13 +8,8 @@ venv/
 .venv/
 venv*/
 ENV/
-
-# IDE
 .vscode/
 .idea/
-
-# Env
 .env
-
-# Logs
+.gitignore
 *.log
